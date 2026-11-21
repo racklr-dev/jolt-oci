@@ -68,6 +68,41 @@
         (:body (http/get url {:headers {"Authorization" (str "Bearer " (token registry repo (challenge (:headers r))))}
                               :as :byte-array :throw-exceptions false}))))))
 
+(defn- registry-host? [h]
+  (or (str/includes? h ".") (str/includes? h ":") (= h "localhost")))
+
+(defn- registry-api [host]
+  (if (= host "docker.io") "registry-1.docker.io" host))
+
+(defn parse-ref
+  "Parse an image reference like `alpine:3.21`, `ghcr.io/o/r:v1`,
+  or `docker.io/library/alpine:latest`. Returns {:registry-api :repo :tag}."
+  [image]
+  (let [image (if (str/starts-with? image "docker.io/") (subs image (count "docker.io/")) image)
+        [rest tag] (if-let [ls (str/last-index-of image "/")]
+                     (let [after (subs image ls)]
+                       (if-let [tp (str/last-index-of after ":")]
+                         [(subs image 0 (+ ls tp)) (subs image (inc (+ ls tp)))]
+                         [image "latest"]))
+                     (let [sp (str/split image #":" 2)]
+                       (if (= 2 (count sp)) sp [image "latest"])))
+        [registry repo] (if-let [slash (str/index-of rest "/")]
+                          (let [first (subs rest 0 slash)]
+                            (if (registry-host? first)
+                              [first (subs rest (inc slash))]
+                              ["docker.io" rest]))
+                          ["docker.io" (str "library/" rest)])]
+    {:registry-api (registry-api registry) :repo repo :tag tag}))
+
+(declare pull)
+
+(defn pull-image
+  "Pull an image by full reference (e.g. `alpine:3.20`).
+  Returns {:config parsed-json :layers [bytes...]}."
+  [image]
+  (let [{:keys [registry-api repo tag]} (parse-ref image)]
+    (pull registry-api repo tag)))
+
 (defn pull
   "Pull an image. Returns {:config parsed-json :layers [bytes...]}."
   [registry repo tag]
