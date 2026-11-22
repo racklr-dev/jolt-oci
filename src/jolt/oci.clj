@@ -20,7 +20,9 @@
 
 (defn- bstr [bs] (String. bs "UTF-8"))
 (defn- slice [bs off len] (java.util.Arrays/copyOfRange bs off (+ off len)))
-(defn- oct->long [s] (Long/parseLong (str/trim s) 8))
+(defn- oct->long [s]
+  (let [t (str/trim s)]
+    (if (empty? t) 0 (Long/parseLong t 8))))
 
 (defn- challenge [headers] (get headers "www-authenticate"))
 
@@ -172,7 +174,9 @@
                 path (str rootfs "/" name)
                 data-off (+ off 512)
                 linkname (str/replace (bstr (slice tar (+ off 157) 100)) #"\u0000.*$" "")
-                base (subs name (inc (str/last-index-of name "/")))]
+                base (if-let [ls (str/last-index-of name "/")]
+                       (subs name (inc ls))
+                       name)]
             (cond
             (and (= type \0) (whiteout? base))
             (.delete (File. (str rootfs "/" (subs name 0 (inc (str/last-index-of name "/"))) (subs base 4))))
