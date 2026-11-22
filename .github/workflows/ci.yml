@@ -1,0 +1,13 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jolt
+        run: curl -sL https://raw.githubusercontent.com/jolt-lang/jolt/main/install | bash
+      - name: Test
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          JOLT_SKIP_MIN_VERSION=1 jolt run test/jolt/oci_smoke_test.clj
