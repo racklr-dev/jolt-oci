@@ -51,10 +51,32 @@
         (get-json url (assoc-in opts [:headers "Authorization"]
                                (str "Bearer " (token registry repo (challenge (:headers r))))))))))
 
-(defn- amd64-manifest [registry repo m]
-  (if (get m "manifests")
-    (let [entry (first (filter (fn [x] (= "linux/amd64" (str (get-in x ["platform" "os"]) "/" (get-in x ["platform" "architecture"]))))
-                               (get m "manifests")))]
+(defn- host-arch
+  "OCI architecture name for this host (the guest is always linux)."
+  []
+  (case (str/lower-case (or (System/getProperty "os.arch") "amd64"))
+    ("amd64" "x86_64") "amd64"
+    ("aarch64" "arm64") "arm64"
+    ("x86" "i386" "i686") "386"
+    ("arm") "arm"
+    ("ppc64le") "ppc64le"
+    ("s390x") "s390x"
+    "amd64"))
+
+(defn platform-manifest
+  "Resolve an index/list manifest to the manifest for platform (defaults to the
+  host arch, linux). Returns m unchanged when it is already a single manifest."
+  [registry repo m & [{:keys [os arch] :or {os "linux" arch (host-arch)}}]]
+  (if-let [entries (get m "manifests")]
+    (let [entry (or (some (fn [x]
+                            (let [p (get x "platform")]
+                              (and (= os (get p "os"))
+                                   (= arch (get p "architecture"))
+                                   x)))
+                          entries)
+                    (throw (ex-info "no image manifest for platform"
+                                    {:os os :arch arch
+                                     :available (mapv (fn [x] (get-in x ["platform" "architecture"])) entries)})))]
       (manifest registry repo (get entry "digest")))
     m))
 
@@ -75,38 +97,43 @@
   (if (= host "docker.io") "registry-1.docker.io" host))
 
 (defn parse-ref
-  "Parse an image reference like `alpine:3.21`, `ghcr.io/o/r:v1`,
-  or `docker.io/library/alpine:latest`. Returns {:registry-api :repo :tag}."
+  "Parse an image reference. Supports `alpine`, `alpine:3.21`, `alpine@sha256:...`,
+  `library/alpine:3.21`, `docker.io/library/alpine:latest`, `ghcr.io/o/r:v1`.
+  Returns {:registry-api :repo :tag} where :tag may be a digest."
   [image]
   (let [image (if (str/starts-with? image "docker.io/") (subs image (count "docker.io/")) image)
-        [rest tag] (if-let [ls (str/last-index-of image "/")]
-                     (let [after (subs image ls)]
-                       (if-let [tp (str/last-index-of after ":")]
-                         [(subs image 0 (+ ls tp)) (subs image (inc (+ ls tp)))]
-                         [image "latest"]))
-                     (let [sp (str/split image #":" 2)]
-                       (if (= 2 (count sp)) sp [image "latest"])))
-        [registry repo] (if-let [slash (str/index-of rest "/")]
-                          (let [first (subs rest 0 slash)]
+        [image digest] (if-let [i (str/index-of image "@")]
+                         [(subs image 0 i) (subs image (inc i))]
+                         [image nil])
+        [image tag] (let [slash (str/last-index-of image "/")
+                          colon (str/last-index-of image ":")]
+                      (if (and colon (or (nil? slash) (> colon slash)))
+                        [(subs image 0 colon) (subs image (inc colon))]
+                        [image "latest"]))
+        [registry repo] (if-let [slash (str/index-of image "/")]
+                          (let [first (subs image 0 slash)]
                             (if (registry-host? first)
-                              [first (subs rest (inc slash))]
-                              ["docker.io" rest]))
-                          ["docker.io" (str "library/" rest)])]
-    {:registry-api (registry-api registry) :repo repo :tag tag}))
+                              [first (subs image (inc slash))]
+                              ["docker.io" image]))
+                          ["docker.io" (str "library/" image)])]
+    {:registry-api (registry-api registry) :repo repo :tag (or digest tag)}))
 
 (declare pull)
 
 (defn pull-image
-  "Pull an image by full reference (e.g. `alpine:3.20`).
-  Returns {:config parsed-json :layers [bytes...]}."
-  [image]
-  (let [{:keys [registry-api repo tag]} (parse-ref image)]
-    (pull registry-api repo tag)))
+  "Pull an image by full reference (e.g. alpine:3.20), optionally for a
+  platform: (pull-image image {:arch :arm64}). Returns
+  {:config parsed-json :layers [bytes...]}."
+  ([image] (pull-image image {}))
+  ([image platform]
+   (let [{:keys [registry-api repo tag]} (parse-ref image)]
+     (pull registry-api repo tag platform))))
 
 (defn pull
-  "Pull an image. Returns {:config parsed-json :layers [bytes...]}."
-  [registry repo tag]
-  (let [m (amd64-manifest registry repo (manifest registry repo tag))]
+  "Pull an image. platform opts: {:os :linux :arch :amd64} (defaults to the
+  host arch, linux). Returns {:config parsed-json :layers [bytes...]}."
+  [registry repo tag & [platform]]
+  (let [m (platform-manifest registry repo (manifest registry repo tag) platform)]
     {:config (json/read-str (bstr (blob registry repo (get-in m ["config" "digest"]))))
      :layers (mapv (fn [l] (blob registry repo (get l "digest"))) (get m "layers"))}))
 
