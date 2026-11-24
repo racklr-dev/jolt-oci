@@ -26,18 +26,41 @@
 
 (defn- challenge [headers] (get headers "www-authenticate"))
 
+(def ^:private transient-statuses #{429 500 502 503 504})
+
+(defn- backoff-ms [attempt] (* 1000 (bit-shift-left 1 (min attempt 4))))
+
+(defn- retry-get
+  "GET url with retry on transient statuses (Docker Hub rate limits, 5xx).
+  :throw-exceptions is forced false; other opts pass through to http/get."
+  [url opts]
+  (loop [attempt 0]
+    (let [r (http/get url (merge {:throw-exceptions false} opts))]
+      (if (and (transient-statuses (:status r)) (< attempt 4))
+        (do (Thread/sleep (backoff-ms attempt))
+            (recur (inc attempt)))
+        r))))
+
 (defn- token [registry repo challenge]
   (let [realm (second (re-find #"realm=\"([^\"]+)\"" challenge))
         service (or (second (re-find #"service=\"([^\"]+)\"" challenge)) registry)
         url (str realm "?service=" service "&scope=repository:" repo ":pull")
-        r (http/get url {:as :string})]
+        r (retry-get url {:as :string})]
+    (when-not (= 200 (:status r))
+      (throw (ex-info "registry token fetch failed" {:url url :status (:status r)})))
     (get (json/read-str (:body r)) "token")))
 
-(defn- get-json [url opts]
-  (let [r (http/get url (merge {:as :string :throw-exceptions false} opts))]
-    (if (= 200 (:status r))
-      (json/read-str (:body r))
-      (throw (ex-info "registry GET failed" {:url url :status (:status r)})))))
+(defn- registry-get
+  "Authenticated Docker Registry v2 GET: retries transient failures, does the
+  token dance on 401, and returns the 200 response map or throws."
+  [registry repo url opts]
+  (loop [auth nil]
+    (let [opts (if auth (assoc-in opts [:headers "Authorization"] (str "Bearer " auth)) opts)
+          r (retry-get url opts)]
+      (cond
+        (= 200 (:status r)) r
+        (and (nil? auth) (= 401 (:status r))) (recur (token registry repo (challenge (:headers r))))
+        :else (throw (ex-info "registry GET failed" {:url url :status (:status r)}))))))
 
 (def accept-types
   "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json")
@@ -46,12 +69,8 @@
   "Fetch an image manifest. Returns a parsed map."
   [registry repo tag]
   (let [url (str "https://" registry "/v2/" repo "/manifests/" tag)
-        opts {:headers {"Accept" accept-types}}]
-    (let [r (http/get url (merge {:as :string :throw-exceptions false} opts))]
-      (if (= 200 (:status r))
-        (json/read-str (:body r))
-        (get-json url (assoc-in opts [:headers "Authorization"]
-                               (str "Bearer " (token registry repo (challenge (:headers r))))))))))
+        r (registry-get registry repo url {:headers {"Accept" accept-types} :as :string})]
+    (json/read-str (:body r))))
 
 (defn host-arch
   "OCI architecture name for this host (the guest is always linux)."
@@ -85,12 +104,9 @@
 (defn blob
   "Fetch a layer/config blob by digest. Returns raw bytes."
   [registry repo digest]
-  (let [url (str "https://" registry "/v2/" repo "/blobs/" digest)]
-    (let [r (http/get url {:as :byte-array :throw-exceptions false})]
-      (if (= 200 (:status r))
-        (:body r)
-        (:body (http/get url {:headers {"Authorization" (str "Bearer " (token registry repo (challenge (:headers r))))}
-                              :as :byte-array :throw-exceptions false}))))))
+  (let [url (str "https://" registry "/v2/" repo "/blobs/" digest)
+        r (registry-get registry repo url {:as :byte-array})]
+    (:body r)))
 
 (defn- registry-host? [h]
   (or (str/includes? h ".") (str/includes? h ":") (= h "localhost")))
