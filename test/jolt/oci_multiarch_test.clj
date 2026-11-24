@@ -16,10 +16,11 @@
   (assert (= d (:tag r)) "digest ref must become :tag")
   (assert (= "library/alpine" (:repo r))))
 
-;; default platform resolves to the host arch (amd64 here)
+;; default platform resolves to the host arch
 (let [img (oci/pull-image "alpine:3.20")]
-  (assert (= "amd64" (get-in img [:config "architecture"]))
-          (str "default platform should be host arch, got " (get-in img [:config "architecture"]))))
+  (assert (= (oci/host-arch) (get-in img [:config "architecture"]))
+          (str "default platform should be host arch " (oci/host-arch)
+               ", got " (get-in img [:config "architecture"]))))
 
 ;; explicit arm64 platform resolves the arm64 manifest from the index
 (let [img (oci/pull-image "alpine:3.20" {:arch "arm64"})]

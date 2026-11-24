@@ -2,12 +2,50 @@ name: ci
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: bash
+          - os: macos-latest
+            shell: bash
+          - os: windows-latest
+            shell: msys2 {0}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install jolt
-        run: curl -sL https://raw.githubusercontent.com/jolt-lang/jolt/main/install | bash
-      - name: Test
+      - name: Set up MSYS2 (windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          path-type: inherit
+          install: curl tar
+      - name: Install jolt (unix)
+        if: runner.os != 'Windows'
+        run: curl -sL https://raw.githubusercontent.com/jolt-lang/jolt/main/install | bash -s -- --version 0.8.28
+      - name: Install jolt (windows)
+        if: runner.os == 'Windows'
+        run: |
+          ws_msys="$(cygpath -u "$GITHUB_WORKSPACE")"
+          cd "$ws_msys"
+          curl -sL -o jolt.tar.gz https://github.com/jolt-lang/jolt/releases/download/v0.8.28/jolt-v0.8.28-x86_64-windows.tar.gz
+          tar -zxf jolt.tar.gz
+      - name: Test (unix)
+        if: runner.os != 'Windows'
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           JOLT_SKIP_MIN_VERSION=1 jolt run test/jolt/oci_smoke_test.clj
+          JOLT_SKIP_MIN_VERSION=1 jolt run test/jolt/oci_multiarch_test.clj
+      - name: Test (windows)
+        if: runner.os == 'Windows'
+        run: |
+          ws_msys="$(cygpath -u "$GITHUB_WORKSPACE")"
+          JOLT_SKIP_MIN_VERSION=1 "$ws_msys/jolt-v0.8.28-x86_64-windows/jolt.exe" run test/jolt/oci_smoke_test.clj
+          JOLT_SKIP_MIN_VERSION=1 "$ws_msys/jolt-v0.8.28-x86_64-windows/jolt.exe" run test/jolt/oci_multiarch_test.clj

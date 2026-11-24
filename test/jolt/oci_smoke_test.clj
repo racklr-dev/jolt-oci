@@ -4,7 +4,7 @@
   (:require [jolt.oci :as oci]
             [clojure.java.io :as io]))
 
-(def rootfs "/tmp/jolt-oci-test-rootfs")
+(def rootfs (str (System/getProperty "java.io.tmpdir") "/jolt-oci-test-rootfs"))
 (defn path [& parts] (io/file (apply str (interpose "/" parts))))
 
 ;; clean slate

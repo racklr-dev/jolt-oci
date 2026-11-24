@@ -53,7 +53,7 @@
         (get-json url (assoc-in opts [:headers "Authorization"]
                                (str "Bearer " (token registry repo (challenge (:headers r))))))))))
 
-(defn- host-arch
+(defn host-arch
   "OCI architecture name for this host (the guest is always linux)."
   []
   (case (str/lower-case (or (System/getProperty "os.arch") "amd64"))
