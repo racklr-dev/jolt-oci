@@ -44,9 +44,12 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           JOLT_SKIP_MIN_VERSION=1 jolt run test/jolt/oci_smoke_test.clj
           JOLT_SKIP_MIN_VERSION=1 jolt run test/jolt/oci_multiarch_test.clj
+      # The unpack smoke writes symlinks (alpine ships /bin/sh -> busybox), and
+      # Files/createSymbolicLink needs Developer Mode or admin on Windows, which
+      # the hosted runner does not grant. Run the portable pull + platform
+      # resolution test there; smoke + multiarch both run on the unix legs.
       - name: Test (windows)
         if: runner.os == 'Windows'
         run: |
           ws_msys="$(cygpath -u "$GITHUB_WORKSPACE")"
-          JOLT_SKIP_MIN_VERSION=1 "$ws_msys/jolt-v0.8.28-x86_64-windows/jolt.exe" run test/jolt/oci_smoke_test.clj
           JOLT_SKIP_MIN_VERSION=1 "$ws_msys/jolt-v0.8.28-x86_64-windows/jolt.exe" run test/jolt/oci_multiarch_test.clj
