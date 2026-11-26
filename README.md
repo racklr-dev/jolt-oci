@@ -64,6 +64,12 @@ aarch64→arm64, `:arch` overrides), references from `alpine` to
 `ghcr.io/o/r:v1`, gzip layers, and tar entries — files, dirs, symlinks,
 hardlinks, whiteouts (`.wh.` and `.wh..wh..opq`), POSIX modes.
 
+## Desktop bases
+
+`examples/desktop-base.clj` pulls and unpacks the alpine base that the
+jolt-microvm desktop examples build on. This library stops at the bootable
+rootfs; jolt-microvm seeds the desktop apk packages and boots it.
+
 ## Status
 
 beta — the smoke test pulls and unpacks a real image, and the multi-arch test
