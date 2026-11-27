@@ -41,10 +41,10 @@
             (recur (inc attempt)))
         r))))
 
-(defn- token [registry repo challenge]
+(defn- token [registry scope challenge]
   (let [realm (second (re-find #"realm=\"([^\"]+)\"" challenge))
         service (or (second (re-find #"service=\"([^\"]+)\"" challenge)) registry)
-        url (str realm "?service=" service "&scope=repository:" repo ":pull")
+        url (str realm "?service=" service "&scope=" scope)
         r (retry-get url {:as :string})]
     (when-not (= 200 (:status r))
       (throw (ex-info "registry token fetch failed" {:url url :status (:status r)})))
@@ -59,8 +59,20 @@
           r (retry-get url opts)]
       (cond
         (= 200 (:status r)) r
-        (and (nil? auth) (= 401 (:status r))) (recur (token registry repo (challenge (:headers r))))
+        (and (nil? auth) (= 401 (:status r))) (recur (token registry (str "repository:" repo ":pull") (challenge (:headers r))))
         :else (throw (ex-info "registry GET failed" {:url url :status (:status r)}))))))
+
+(defn- registry-catalog-get
+  "Authenticated GET for the registry-wide catalog scope (registry:catalog:*)."
+  [registry url opts]
+  (loop [auth nil]
+    (let [opts (if auth (assoc-in opts [:headers "Authorization"] (str "Bearer " auth)) opts)
+          r (retry-get url opts)]
+      (cond
+        (= 200 (:status r)) r
+        (and (nil? auth) (= 401 (:status r)))
+        (recur (token registry "registry:catalog:*" (challenge (:headers r))))
+        :else (throw (ex-info "registry catalog GET failed" {:url url :status (:status r)}))))))
 
 (def accept-types
   "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json")
@@ -154,6 +166,41 @@
   (let [m (platform-manifest registry repo (manifest registry repo tag) platform)]
     {:config (json/read-str (bstr (blob registry repo (get-in m ["config" "digest"]))))
      :layers (mapv (fn [l] (blob registry repo (get l "digest"))) (get m "layers"))}))
+
+(defn tags
+  "List tags for a repository. registry is the registry host (\"docker.io\",
+  \"ghcr.io\"), repo the image path (\"library/alpine\"). opts: {:n page-size
+  :last continue-token}. Returns the tag vector (all tags, or the next :n when
+  :n is passed; :last pages a subsequent window)."
+  ([registry repo] (tags registry repo {}))
+  ([registry repo {:keys [n last]}]
+   (let [api (registry-api registry)
+         qs (cond
+              (and n last) (str "?n=" n "&last=" last)
+              n (str "?n=" n)
+              last (str "?last=" last)
+              :else "")
+         url (str "https://" api "/v2/" repo "/tags/list" qs)
+         r (registry-get api repo url {:as :string})]
+     (get (json/read-str (:body r)) "tags"))))
+
+(defn catalog
+  "List repositories in a registry. opts: {:n page-size :last continue-token}.
+  Returns {:repositories [...] :next last-token-or-nil}. Docker Hub denies the
+  catalog scope to anonymous clients; use a registry that permits it."
+  ([registry] (catalog registry {}))
+  ([registry {:keys [n last]}]
+   (let [api (registry-api registry)
+         qs (cond
+              (and n last) (str "?n=" n "&last=" last)
+              n (str "?n=" n)
+              last (str "?last=" last)
+              :else "")
+         url (str "https://" api "/v2/_catalog" qs)
+         r (registry-catalog-get api url {:as :string})
+         body (json/read-str (:body r))]
+     {:repositories (get body "repositories" [])
+      :next (get body "last")})))
 
 (defn- whiteout?
   [basename]

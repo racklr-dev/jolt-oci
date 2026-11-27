@@ -55,14 +55,18 @@ jolt run test/jolt/oci_multiarch_test.clj
 | `blob` | `registry repo digest` | blob bytes | registry/HTTP errors |
 | `pull-image` | `image & opts` | `{:config ... :layers [...]}` | registry/HTTP errors |
 | `pull` | `image & opts` | `{:config parsed-json :layers [bytes...]}` | registry/HTTP errors |
+| `tags` | `registry repo & opts` | the tag vector | registry/HTTP errors |
+| `catalog` | `registry & opts` | `{:repositories [...] :next token}` | registry/HTTP errors (Docker Hub denies it anonymously) |
 | `unpack-layer` | `rootfs layer-gz` | nil (writes into `rootfs`) | tar extraction errors |
 | `unpack` | `rootfs layers` | nil (writes into `rootfs`) | tar extraction errors |
 
 Handled: Bearer token auth (anonymous and authenticated), image index +
 manifest-list → per-platform manifest (host arch default: x86_64→amd64,
 aarch64→arm64, `:arch` overrides), references from `alpine` to
-`ghcr.io/o/r:v1`, gzip layers, and tar entries — files, dirs, symlinks,
-hardlinks, whiteouts (`.wh.` and `.wh..wh..opq`), POSIX modes.
+`ghcr.io/o/r:v1`, tag listing (`tags/list`, paged), the registry catalog
+(`_catalog`, where the registry permits it), gzip layers, and tar entries —
+files, dirs, symlinks, hardlinks, whiteouts (`.wh.` and `.wh..wh..opq`),
+POSIX modes.
 
 ## Desktop bases
 
